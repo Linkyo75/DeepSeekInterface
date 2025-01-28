@@ -1,5 +1,1 @@
-echo "node_modules
-dist
-.env
-.DS_Store
-.vscode" > .gitignore
+node_modules
