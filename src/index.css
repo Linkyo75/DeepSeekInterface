@@ -39,3 +39,26 @@ body {
 .flex-1 {
   flex: 1 1 auto;
 }
+
+.relative:has(textarea):not(:has(textarea:disabled)) {
+  &.bg-blue-50 {
+    .hidden {
+      display: block;
+    }
+    textarea {
+      background-color: rgb(239 246 255 / 0.5);
+    }
+  }
+}
+
+/* For browsers that don't support :has */
+@supports not selector(:has(*)) {
+  .relative textarea:not(:disabled) + div {
+    opacity: 0;
+    pointer-events: none;
+  }
+  
+  .relative.bg-blue-50 textarea:not(:disabled) + div {
+    opacity: 1;
+  }
+}

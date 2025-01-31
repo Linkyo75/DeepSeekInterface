@@ -1,11 +1,15 @@
-import React from 'react';
-import ChatInterface from './components/chat/ChatInterface';
+import React, { Suspense } from 'react';
+
+// Lazy load the ChatInterface
+const ChatInterface = React.lazy(() => import('./components/chat/ChatInterface'));
 
 const App = () => {
+  console.log('Rendering App component');
+  
   return (
-    <main className="min-h-screen bg-background">
-      <ChatInterface />
-    </main>
+
+        <ChatInterface />
+
   );
 };
 
