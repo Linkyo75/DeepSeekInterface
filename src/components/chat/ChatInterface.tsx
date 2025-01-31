@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Loader2, FileText } from 'lucide-react';
+import { Send, Loader2, FileText, Eye, EyeOff, Trash2 } from 'lucide-react';
 import { Card, CardContent } from '../ui/card';
 import { Button } from '../ui/button';
 import {
@@ -16,6 +16,8 @@ import { Textarea } from '../ui/textarea';
 import ModelInstaller from './ModelInstaller';
 import FileUpload, { processFile } from './FileUpload';
 import CopyButton from './CopyButton';
+import ExportButton from './ExportButton';
+
 
 const DEEPSEEK_MODELS = [
   { value: "deepseek-r1:1.5b", label: "DeepSeek-R1-Distill-Qwen-1.5B" },
@@ -38,12 +40,22 @@ const ChatInterface = () => {
   const [selectedModel, setSelectedModel] = useState("deepseek-r1:7b");
   const messagesEndRef = useRef(null);
   const [currentFile, setCurrentFile] = useState(null);
+  const [showThinking, setShowThinking] = useState(true);
+
+
 
 
   useEffect(() => {
     localStorage.setItem('chatHistory', JSON.stringify(messages));
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  const processContent = (content) => {
+    if (!content) return '';
+    if (showThinking) return content;
+    return content.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+  };
+
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -125,9 +137,8 @@ const ChatInterface = () => {
               </SelectContent>
             </Select>
             <ModelInstaller modelId={selectedModel} />
-            <Button variant="ghost" onClick={clearChat}>
-              Clear Chat
-            </Button>
+            <ExportButton messages={messages} />
+
           </div>
         </div>
       </div>
@@ -151,7 +162,7 @@ const ChatInterface = () => {
                   </div>                )}
               </div>
               <div className="text-card-foreground whitespace-pre-wrap">
-                {message.content}
+                {processContent(message.content)}
               </div>
               {message.attachedFile && (
                 <div className="mt-2 flex items-center gap-1 text-sm text-gray-500">
@@ -217,12 +228,43 @@ const ChatInterface = () => {
           </div>
 
           <div className="flex justify-end gap-2 items-center">
+
+          <Button
+              variant="ghost"
+              size="sm"
+              onClick={clearChat}
+              className="flex items-center gap-2"
+            >
+              <Trash2 className="h-4 w-4" />
+              Clear Chat
+            </Button>
+
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setShowThinking(!showThinking)}
+            className="flex items-center gap-2"
+          >
+            {showThinking ? (
+              <>
+                <Eye className="h-4 w-4" />
+                Show Thinking
+              </>
+            ) : (
+              <>
+                <EyeOff className="h-4 w-4" />
+                Hide Thinking
+              </>
+            )}
+          </Button>
+
           <FileUpload 
               onFileUpload={setCurrentFile}
               onFileRemove={() => setCurrentFile(null)}
               currentFile={currentFile}
               disabled={isLoading}
             />
+
             <VoiceInput 
               onTranscript={(text) => setInput(prev => prev + text)}
               disabled={isLoading}
