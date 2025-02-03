@@ -1,15 +1,24 @@
-import React, { Suspense } from 'react';
-
-// Lazy load the ChatInterface
-const ChatInterface = React.lazy(() => import('./components/chat/ChatInterface'));
+import React from 'react';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { Toaster } from 'sonner';
+import ChatInterface from './components/chat/ChatInterface';
+import LandingPage from './components/LandingPage';
+import DocumentationPage from './components/DocumentationPage';
+import ErrorBoundary from './components/ErrorBoundary';
 
 const App = () => {
-  console.log('Rendering App component');
-  
   return (
-
-        <ChatInterface />
-
+    <BrowserRouter>
+      <ErrorBoundary>
+        <Routes>
+          <Route path="/" element={<LandingPage />} />
+          <Route path="/chat" element={<ChatInterface />} />
+          <Route path="/docs" element={<DocumentationPage />} />
+          <Route path="*" element={<Navigate to="/" />} />
+        </Routes>
+        <Toaster position="top-center" />
+      </ErrorBoundary>
+    </BrowserRouter>
   );
 };
 

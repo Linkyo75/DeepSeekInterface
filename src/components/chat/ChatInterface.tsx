@@ -1,54 +1,119 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Loader2, FileText, Eye, EyeOff, Trash2 } from 'lucide-react';
+import { Send, Loader2, FileText, Eye, EyeOff, Trash2, ChevronLeft, Settings } from 'lucide-react';
+import ModelSelector from './ModelSelector';
+import ModelInstallation from './ModelInstallation';
 import { Card, CardContent } from '../ui/card';
 import { Button } from '../ui/button';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "../ui/select";
+import { Select, SelectTrigger, SelectValue } from '../ui/select';
 import VoiceInput from './VoiceInput';
-import { Toaster } from 'sonner';
+import { Toaster, toast } from 'sonner';
 import TextToSpeechButton from './TextToSpeech';
 import { Textarea } from '../ui/textarea';
-import ModelInstaller from './ModelInstaller';
 import FileUpload, { processFile } from './FileUpload';
 import CopyButton from './CopyButton';
 import ExportButton from './ExportButton';
+import { useOllama } from '../../hooks/useOllama';
+import { Link, useNavigate } from 'react-router-dom';
+import ConnectionSettings from './ConnectionSettings';
+import { useSettingsStore } from '../../stores/useSettingsStore';
 
 
-const DEEPSEEK_MODELS = [
-  { value: "deepseek-r1:1.5b", label: "DeepSeek-R1-Distill-Qwen-1.5B" },
-  { value: "deepseek-r1:7b", label: "DeepSeek-R1-Distill-Qwen-7B" },
-  { value: "deepseek-r1:8b", label: "DeepSeek-R1-Distill-Llama-8B" },
-  { value: "deepseek-r1:14b", label: "DeepSeek-R1-Distill-Qwen-14B" },
-  { value: "deepseek-r1:32b", label: "DeepSeek-R1-Distill-Qwen-32B" },
-  { value: "deepseek-r1:70b", label: "DeepSeek-R1-Distill-Llama-70B" }
-];
 
 const ChatInterface = () => {
-  const initialMessages = () => {
-    const saved = localStorage.getItem('chatHistory');
-    return saved ? JSON.parse(saved) : [];
-  };
-
-  const [messages, setMessages] = useState(initialMessages);
+  const { ollamaUrl, setOllamaUrl } = useSettingsStore();
+  const { isConnected, isChecking, sendMessage, checkConnection } = useOllama();
+  const navigate = useNavigate();
+  
+  // State for messages and input
+  const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [selectedModel, setSelectedModel] = useState("deepseek-r1:7b");
-  const messagesEndRef = useRef(null);
   const [currentFile, setCurrentFile] = useState(null);
   const [showThinking, setShowThinking] = useState(true);
+  
+  // Model selection state
+  const [selectedModel, setSelectedModel] = useState(null);
+  const [modelSelectorOpen, setModelSelectorOpen] = useState(false);
+  const [isModelSelectorOpen, setIsModelSelectorOpen] = useState(true);
+  const [isInstallationOpen, setIsInstallationOpen] = useState(false);
+  const [installedModels, setInstalledModels] = useState([]);
 
-
-
+  const messagesEndRef = useRef(null);
 
   useEffect(() => {
-    localStorage.setItem('chatHistory', JSON.stringify(messages));
+    // Check installed models on mount and after installation
+    fetchInstalledModels();
+  }, []);
+
+  useEffect(() => {
+    if (!isChecking && !isConnected) {
+      navigate('/');
+    }
+  }, [isChecking, isConnected]);
+
+  useEffect(() => {
+    if (!isChecking && !isConnected) {
+      setTimeout(() => {
+        toast.error('Cannot connect to Ollama');
+      }, 0);
+    }
+  }, [isChecking, isConnected]);
+
+  useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  useEffect(() => {
+    if (!isInstallationOpen && selectedModel) {
+      const timer = setTimeout(() => {
+        toast.success(`Model ${selectedModel} is ready to use!`);
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [isInstallationOpen, selectedModel]);
+
+  const fetchInstalledModels = async () => {
+    try {
+      const response = await fetch(`${ollamaUrl}/api/tags`);
+      if (!response.ok) {
+        throw new Error(`Server returned ${response.status}`);
+      }
+      const data = await response.json();
+      setInstalledModels(data.models?.map(model => model.name) || []);
+    } catch (error) {
+      console.error('Error fetching installed models:', error);
+      toast.error('Failed to fetch installed models. Please check if Ollama is running.');
+      return [];
+    }
+  };
+
+  const handleModelSelect = async (modelId) => {
+    if (installedModels.includes(modelId)) {
+      setSelectedModel(modelId);
+      setIsModelSelectorOpen(false);
+    } else {
+      // Keep the selector open and don't set the model until it's installed
+      const tempModel = modelId;
+      setSelectedModel(null); // Clear current selection until installation is complete
+      setIsInstallationOpen(true);
+      
+      // Only update the selected model after successful installation
+      const onComplete = async () => {
+        await fetchInstalledModels();
+        setIsInstallationOpen(false);
+        setSelectedModel(tempModel);
+        setIsModelSelectorOpen(false);
+      };
+      
+      return onComplete;
+    }
+  };
+
+  const handleInstallationComplete = React.useCallback(async () => {
+    await fetchInstalledModels();
+    setIsInstallationOpen(false);
+    setIsModelSelectorOpen(false);
+  }, [fetchInstalledModels]);
 
   const processContent = (content) => {
     if (!content) return '';
@@ -56,14 +121,36 @@ const ChatInterface = () => {
     return content.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
   };
 
+  const handleUninstallModel = async (modelId) => {
+    try {
+      const response = await fetch(`${ollamaUrl}/api/delete`, {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ name: modelId }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to uninstall model: ${response.statusText}`);
+      }
+
+      await fetchInstalledModels(); // Refresh the list
+      toast.success(`Successfully uninstalled ${modelId}`);
+    } catch (error) {
+      console.error('Error uninstalling model:', error);
+      toast.error(`Failed to uninstall ${modelId}`);
+    }
+  };
+
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!input.trim() && !currentFile) return;
-
-    let enhancedPrompt = input;
-    if (currentFile) {
-      enhancedPrompt = `${input || 'Please analyze this document:'}\n\n### File Content (${currentFile.name}):\n${currentFile.content}`;
+    if (!selectedModel) {
+      toast.error('Please select a model first');
+      setIsModelSelectorOpen(true);
+      return;
     }
 
     const userMessage = {
@@ -72,36 +159,20 @@ const ChatInterface = () => {
       attachedFile: currentFile?.name
     };
     
-    
     setMessages(prev => [...prev, userMessage]);
     setInput('');
     setCurrentFile(null);
     setIsLoading(true);
 
-    try {
-      const response = await fetch('http://localhost:11434/api/generate', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: selectedModel,
-          prompt: enhancedPrompt,
-          stream: false
-        }),
-      });
-
-      const data = await response.json();
-      setMessages(prev => [...prev, { role: 'assistant', content: data.response }]);
-    } catch (error) {
-      console.error('Error:', error);
-      setMessages(prev => [...prev, {
-        role: 'error',
-        content: 'Failed to get response. Please ensure Ollama is running with the Deepseek model.'
+    const response = await sendMessage(selectedModel, input);
+    if (response.success) {
+      setMessages(prev => [...prev, { 
+        role: 'assistant', 
+        content: response.response 
       }]);
-    } finally {
-      setIsLoading(false);
     }
+    
+    setIsLoading(false);
   };
 
   const clearChat = () => {
@@ -117,28 +188,50 @@ const ChatInterface = () => {
   };
     
 
+ 
 
   return (
     <div className="flex flex-col min-h-screen bg-background">
       <div className="sticky top-0 z-10 border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
         <div className="flex h-16 items-center px-4">
-          <h1 className="text-xl font-semibold">Deepseek Chat</h1>
-          <div className="ml-auto flex items-center space-x-4">
-            <Select value={selectedModel} onValueChange={setSelectedModel}>
-              <SelectTrigger className="w-[260px]">
-                <SelectValue placeholder="Select a model" />
-              </SelectTrigger>
-              <SelectContent>
-                {DEEPSEEK_MODELS.map((model) => (
-                  <SelectItem key={model.value} value={model.value}>
-                    {model.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <ModelInstaller modelId={selectedModel} />
-            <ExportButton messages={messages} />
+          <Link to="/">
+            <Button variant="outline" size="sm">
+              <ChevronLeft className="h-4 w-4 mr-2" />
+              Back
+            </Button>
+          </Link>
 
+          <h1 className="text-4xl ml-4 font-bold bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 bg-clip-text text-transparent">
+            Your locally running chat
+          </h1>
+
+          <div className="ml-auto flex items-center space-x-4">
+            <Button 
+              variant="outline" 
+              onClick={() => setModelSelectorOpen(true)}
+              className="w-[260px]"
+            >
+              {selectedModel || "Please select a model"} 
+            </Button>
+
+            {/* Model selector dialog */}
+            <ModelSelector
+              selectedModel={selectedModel}
+              onModelChange={handleModelSelect}
+              open={modelSelectorOpen}
+              onOpenChange={setModelSelectorOpen}
+              installedModels={installedModels}
+              onUninstall={handleUninstallModel}
+
+            />
+
+
+            <ConnectionSettings
+              currentUrl={ollamaUrl}
+              onUrlChange={setOllamaUrl}
+              onTest={checkConnection}
+            />
+            <ExportButton messages={messages} />
           </div>
         </div>
       </div>
@@ -182,54 +275,22 @@ const ChatInterface = () => {
         <div ref={messagesEndRef} />
       </div>
 
-      <div className="sticky bottom-0 border-t border-border bg-background p-4">
+    {/* Chat input area */}
+    <div className="sticky bottom-0 border-t border-border bg-background p-4">
         <form onSubmit={handleSubmit} className="max-w-4xl mx-auto space-y-2">
-        <div 
-            className="relative"
-            onDragOver={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              e.currentTarget.classList.add('bg-blue-50');
-            }}
-            onDragLeave={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              e.currentTarget.classList.remove('bg-blue-50');
-            }}
-            onDrop={async (e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              e.currentTarget.classList.remove('bg-blue-50');
-              
-              const file = e.dataTransfer.files[0];
-              if (file) {
-                const processedFile = await processFile(file);
-                if (processedFile) {
-                  setCurrentFile(processedFile);
-                }
-              }
-            }}
-          >
+          <div className="relative">
             <Textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="Type your message or drop a file here... (Press Enter to send, Shift+Enter for new line)"
+              placeholder={selectedModel ? "Type your message..." : "Please select a model to start chatting"}
               className="min-h-[120px] p-3 text-base resize-y transition-colors"
-              disabled={isLoading}
+              disabled={isLoading || !selectedModel}
             />
-            {!currentFile && (
-              <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-blue-50/0 transition-colors">
-                <div className="hidden text-blue-500 bg-white/80 px-4 py-2 rounded-md shadow-sm">
-                  Drop your file here
-                </div>
-              </div>
-            )}
           </div>
 
           <div className="flex justify-end gap-2 items-center">
-
-          <Button
+            <Button
               variant="ghost"
               size="sm"
               onClick={clearChat}
@@ -239,39 +300,40 @@ const ChatInterface = () => {
               Clear Chat
             </Button>
 
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setShowThinking(!showThinking)}
-            className="flex items-center gap-2"
-          >
-            {showThinking ? (
-              <>
-                <Eye className="h-4 w-4" />
-                Show Thinking
-              </>
-            ) : (
-              <>
-                <EyeOff className="h-4 w-4" />
-                Hide Thinking
-              </>
-            )}
-          </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setShowThinking(!showThinking)}
+              className="flex items-center gap-2"
+            >
+              {showThinking ? (
+                <>
+                  <Eye className="h-4 w-4" />
+                  Show Thinking
+                </>
+              ) : (
+                <>
+                  <EyeOff className="h-4 w-4" />
+                  Hide Thinking
+                </>
+              )}
+            </Button>
 
-          <FileUpload 
+            <FileUpload 
               onFileUpload={setCurrentFile}
               onFileRemove={() => setCurrentFile(null)}
               currentFile={currentFile}
-              disabled={isLoading}
+              disabled={isLoading || !selectedModel}
             />
 
             <VoiceInput 
               onTranscript={(text) => setInput(prev => prev + text)}
-              disabled={isLoading}
+              disabled={isLoading || !selectedModel}
             />
+            
             <Button 
               type="submit" 
-              disabled={isLoading || !input.trim()}
+              disabled={isLoading || !selectedModel || !input.trim()}
               className="px-4 py-2"
             >
               <Send className="h-4 w-4 mr-2" />
@@ -280,6 +342,16 @@ const ChatInterface = () => {
           </div>
         </form>
       </div>
+
+      {/* Model Selection and Installation Modals */}
+
+      <ModelInstallation
+        modelId={selectedModel}
+        isOpen={isInstallationOpen}
+        onClose={() => setIsInstallationOpen(false)}
+        onInstallComplete={handleInstallationComplete}
+      />
+
       <Toaster position="top-center" />
     </div>
   );
