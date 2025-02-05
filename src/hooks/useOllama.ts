@@ -1,6 +1,5 @@
 // src/hooks/useOllama.ts
 import { useState, useEffect, useCallback, useRef } from 'react';
-import React from 'react';
 import { toast } from 'sonner';
 import { OLLAMA_CONFIG } from '../config/ollama';
 
@@ -8,17 +7,7 @@ export const useOllama = () => {
   const [isConnected, setIsConnected] = useState(false);
   const [isChecking, setIsChecking] = useState(true);
   const [installedModels, setInstalledModels] = useState([]);
-  const [connectionError, setConnectionError] = useState(null);
-  const errorShownRef = useRef(false);
-  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
-
-  useEffect(() => {
-    return () => {
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current);
-      }
-    };
-  }, []);
+  const timeoutRef = useRef(null);
 
   const checkConnection = useCallback(async (retryCount = 0) => {
     try {
@@ -27,6 +16,13 @@ export const useOllama = () => {
       const timeoutId = setTimeout(() => controller.abort(), OLLAMA_CONFIG.CONNECTION_TIMEOUT);
 
       const response = await fetch(`${OLLAMA_CONFIG.BASE_URL}/api/tags`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        mode: 'cors', // Explicitly set CORS mode
+        cache: 'no-cache', // Prevent caching issues
+        credentials: 'omit', // Don't send credentials
         signal: controller.signal
       });
 
@@ -39,32 +35,16 @@ export const useOllama = () => {
       const data = await response.json();
       setInstalledModels(data.models || []);
       setIsConnected(true);
-      setConnectionError(null);
-      errorShownRef.current = false;
       return true;
     } catch (error) {
       setIsConnected(false);
-      let errorMessage = 'Failed to connect to Ollama';
-      
-      if (error.name === 'AbortError') {
-        errorMessage = 'Connection timeout. Ollama might be running on a different port.';
-      } else if (error.message.includes('Failed to fetch')) {
-        errorMessage = 'Cannot connect to Ollama';
-      }
+      console.error('Connection error:', error);
 
-      setConnectionError(errorMessage);
-
-      // Show error toast only if it hasn't been shown yet
-      if (!errorShownRef.current) {
-        errorShownRef.current = true;
+      // Only show error toast on final retry
+      if (retryCount >= OLLAMA_CONFIG.RETRY_ATTEMPTS - 1) {
         timeoutRef.current = setTimeout(() => {
-          toast.error('Cannot connect to Ollama. Please check if:', {
-            description: React.createElement('ul',
-              { className: 'list-disc pl-4 mt-2' },
-              React.createElement('li', null, 'Ollama is installed and running'),
-              React.createElement('li', null, 'The correct port is configured (default: 11434)'),
-              React.createElement('li', null, 'No firewall is blocking the connection')
-            ),
+          toast.error('Cannot connect to Ollama. Please check:', {
+            description: 'Make sure Ollama is running and CORS Unblock is enabled',
             duration: 5000,
           });
         }, 0);
@@ -72,11 +52,9 @@ export const useOllama = () => {
 
       // Retry logic
       if (retryCount < OLLAMA_CONFIG.RETRY_ATTEMPTS) {
-        timeoutRef.current = setTimeout(() => {
-          checkConnection(retryCount + 1);
-        }, OLLAMA_CONFIG.RETRY_DELAY);
+        await new Promise(resolve => setTimeout(resolve, OLLAMA_CONFIG.RETRY_DELAY));
+        return checkConnection(retryCount + 1);
       }
-
       return false;
     } finally {
       setIsChecking(false);
@@ -85,16 +63,19 @@ export const useOllama = () => {
 
   const sendMessage = async (model, prompt) => {
     if (!isConnected) {
-      timeoutRef.current = setTimeout(() => {
-        toast.error('Not connected to Ollama');
-      }, 0);
+      toast.error('Not connected to Ollama');
       return { success: false, error: 'Not connected' };
     }
 
     try {
       const response = await fetch(`${OLLAMA_CONFIG.BASE_URL}/api/generate`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        mode: 'cors',
+        cache: 'no-cache',
+        credentials: 'omit',
         body: JSON.stringify({ model, prompt, stream: false }),
       });
       
@@ -105,24 +86,16 @@ export const useOllama = () => {
       const data = await response.json();
       return { success: true, response: data.response };
     } catch (error) {
-      timeoutRef.current = setTimeout(() => {
-        toast.error(error.message);
-      }, 0);
+      console.error('Message error:', error);
+      toast.error(error.message);
       return { success: false, error: error.message };
     }
   };
 
-  const isModelInstalled = useCallback((modelId) => {
-    return installedModels.some(model => model.name === modelId);
-  }, [installedModels]);
-
   useEffect(() => {
-    const check = async () => {
-      await checkConnection();
-    };
-    check();
-
-    const interval = setInterval(check, 30000);
+    checkConnection();
+    const interval = setInterval(checkConnection, 30000); // Check every 30 seconds
+    
     return () => {
       clearInterval(interval);
       if (timeoutRef.current) {
@@ -134,11 +107,8 @@ export const useOllama = () => {
   return {
     isConnected,
     isChecking,
-    connectionError,
     installedModels,
     sendMessage,
-    isModelInstalled,
     checkConnection,
-    baseUrl: OLLAMA_CONFIG.BASE_URL,
   };
 };
